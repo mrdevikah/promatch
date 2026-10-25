@@ -1,0 +1,8 @@
+# Copy this file to "db.properties" (same folder as src) and fill in YOUR database details.
+# db.properties is listed in .gitignore, so the password never goes to GitHub.
+# Share the real values with your teammates privately (not in the repo, not in a public chat).
+
+# jdbc:mysql://HOST:PORT/DATABASE_NAME?sslMode=REQUIRED
+db.url=jdbc:mysql://your-host.example.com:3306/defaultdb?sslMode=REQUIRED
+db.user=your_user
+db.password=your_password
