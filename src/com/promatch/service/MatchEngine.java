@@ -3,6 +3,7 @@ package com.promatch.service;
 import com.promatch.model.ProjectPitch;
 import com.promatch.model.Student;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,5 +51,59 @@ public class MatchEngine {
         }
 
         return matchResults;
+    }
+
+    // =====================================================================
+    //  Added for the GUI (the methods above are unchanged).
+    //  The GUI needs results as a SORTED LIST (best match first), because a
+    //  HashMap has no order. These reuse calculateMatchScore() above.
+    // =====================================================================
+
+    /** An item (a project or a student) together with its compatibility score (0-100). */
+    public static class Match<T> {
+        private final T item;
+        private final int score;
+
+        public Match(T item, int score) {
+            this.item = item;
+            this.score = score;
+        }
+
+        public T getItem() { return item; }
+        public int getScore() { return score; }
+    }
+
+    /** The required skills (original spelling) that the student already has. */
+    public static List<String> getMatchedSkills(List<String> requiredSkills, List<String> studentSkills) {
+        List<String> matched = new ArrayList<>();
+        for (String req : requiredSkills) {
+            for (String have : studentSkills) {
+                if (req.trim().equalsIgnoreCase(have.trim())) {
+                    matched.add(req);
+                    break;
+                }
+            }
+        }
+        return matched;
+    }
+
+    /** Projects ranked best-first for one student. */
+    public static List<Match<ProjectPitch>> rankProjectsForStudent(Student student, List<ProjectPitch> pitches) {
+        List<Match<ProjectPitch>> result = new ArrayList<>();
+        for (ProjectPitch pitch : pitches) {
+            result.add(new Match<>(pitch, (int) Math.round(calculateMatchScore(student, pitch))));
+        }
+        result.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
+        return result;
+    }
+
+    /** All given students ranked best-first for one project (available or not; the GUI can filter). */
+    public static List<Match<Student>> rankStudentMatches(ProjectPitch pitch, List<Student> students) {
+        List<Match<Student>> result = new ArrayList<>();
+        for (Student student : students) {
+            result.add(new Match<>(student, (int) Math.round(calculateMatchScore(student, pitch))));
+        }
+        result.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
+        return result;
     }
 }
