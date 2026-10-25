@@ -20,7 +20,6 @@ public class PitchCreationDialog extends JDialog {
             "Java", "Python", "SQL", "React", "Node.js", "Embedded C", "MATLAB", "Docker"
     };
 
-    private final DatabaseManager db;
     private final Student creator;
     private boolean published = false;
 
@@ -33,9 +32,8 @@ public class PitchCreationDialog extends JDialog {
     private final Theme.PillButton publishButton =
             new Theme.PillButton("Publish Pitch", Theme.PillButton.Kind.PRIMARY);
 
-    public PitchCreationDialog(Frame owner, DatabaseManager db, Student creator) {
+    public PitchCreationDialog(Frame owner, Student creator) {
         super(owner, "Pitch a Project", true);
-        this.db = db;
         this.creator = creator;
 
         JPanel root = new JPanel(new BorderLayout(0, 18));
@@ -163,7 +161,7 @@ public class PitchCreationDialog extends JDialog {
                     Theme.parseSkills(skillsField.getText()),
                     (Integer) teamSizeSpinner.getValue(),
                     creator.getUserId());
-            db.addPitch(pitch);          // throws InvalidPitchException if a rule is broken
+            DatabaseManager.addPitch(pitch);          // throws InvalidPitchException if a rule is broken
             published = true;
             dispose();
         } catch (InvalidPitchException ex) {
@@ -173,4 +171,3 @@ public class PitchCreationDialog extends JDialog {
         }
     }
 }
-
