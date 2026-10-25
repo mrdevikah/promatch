@@ -36,18 +36,15 @@ public class DashboardFrame extends JFrame {
     private static final String PROFILE = "Profile";
     private static final String[] VIEW_NAMES = {DASHBOARD, EXPLORE, TEAMMATES, INVITATIONS, PROFILE};
 
-    private final DatabaseManager db;
     private final Student currentUser;
-    private final MatchEngine engine = new MatchEngine();
 
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
     private final Map<String, JComponent> views = new HashMap<>();
     private final Map<String, NavButton> navButtons = new LinkedHashMap<>();
 
-    public DashboardFrame(DatabaseManager db, Student currentUser) {
+    public DashboardFrame(Student currentUser) {
         super("ProMatch - " + Theme.APP_SUBTITLE);
-        this.db = db;
         this.currentUser = currentUser;
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
@@ -109,7 +106,7 @@ public class DashboardFrame extends JFrame {
         NavButton signOut = new NavButton("Sign Out", new Color(0xF0D9DE));
         signOut.addActionListener(e -> {
             dispose();
-            new LoginFrame(db).setVisible(true);
+            new LoginFrame().setVisible(true);
         });
         JPanel line2 = new JPanel();
         line2.setBackground(Theme.SIDEBAR_LINE);
@@ -218,7 +215,7 @@ public class DashboardFrame extends JFrame {
 
     private List<ProjectPitch> otherStudentsPitches() {
         List<ProjectPitch> list = new ArrayList<>();
-        for (ProjectPitch p : db.getAllPitches()) {
+        for (ProjectPitch p : DatabaseManager.getAllPitches()) {
             if (p.getCreatorId() != currentUser.getUserId()) {
                 list.add(p);
             }
@@ -226,10 +223,10 @@ public class DashboardFrame extends JFrame {
         return list;
     }
 
-    private List<Student> otherStudents() {
+    private List<Student> otherStudents(boolean availableOnly) {
         List<Student> list = new ArrayList<>();
-        for (Student s : db.getAllStudents()) {
-            if (s.getUserId() != currentUser.getUserId()) {
+        for (Student s : DatabaseManager.getAllStudents()) {
+            if (s.getUserId() != currentUser.getUserId() && (!availableOnly || s.isAvailabilityStatus())) {
                 list.add(s);
             }
         }
@@ -238,7 +235,7 @@ public class DashboardFrame extends JFrame {
 
     private Map<Integer, Student> studentsById() {
         Map<Integer, Student> map = new HashMap<>();
-        for (Student s : db.getAllStudents()) {
+        for (Student s : DatabaseManager.getAllStudents()) {
             map.put(s.getUserId(), s);
         }
         return map;
@@ -287,7 +284,7 @@ public class DashboardFrame extends JFrame {
     }
 
     private void openPitchDialog() {
-        PitchCreationDialog dialog = new PitchCreationDialog(this, db, currentUser);
+        PitchCreationDialog dialog = new PitchCreationDialog(this, currentUser);
         dialog.setVisible(true);                 // modal: waits here until it is closed
         if (dialog.isPublished()) {
             showView(DASHBOARD);
@@ -296,7 +293,7 @@ public class DashboardFrame extends JFrame {
 
     /** Send an invitation to a student for one of my projects. */
     private void inviteStudent(Student target, ProjectPitch pitch) {
-        boolean sent = db.sendInvitation(currentUser.getUserId(), target.getUserId(), pitch.getProjectId());
+        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), target.getUserId(), pitch.getProjectId());
         if (sent) {
             info("Invitation sent to " + target.getName() + " for \"" + pitch.getTitle() + "\".", "Invitation sent");
         } else {
@@ -307,7 +304,7 @@ public class DashboardFrame extends JFrame {
 
     /** Ask to join somebody else's project. */
     private void requestToJoin(ProjectPitch pitch, Map<Integer, Student> students) {
-        boolean sent = db.sendInvitation(currentUser.getUserId(), pitch.getCreatorId(), pitch.getProjectId());
+        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), pitch.getCreatorId(), pitch.getProjectId());
         String creator = nameOf(students, pitch.getCreatorId());
         if (sent) {
             info("Your request was sent to " + creator + ".", "Request sent");
@@ -322,8 +319,8 @@ public class DashboardFrame extends JFrame {
     // =====================================================================
 
     private JComponent buildDashboardView() {
-        List<ProjectPitch> mine = db.getPitchesByCreator(currentUser.getUserId());
-        List<ProjectPitch> joined = db.getJoinedPitches(currentUser.getUserId());
+        List<ProjectPitch> mine = DatabaseManager.getPitchesByCreator(currentUser.getUserId());
+        List<ProjectPitch> joined = DatabaseManager.getJoinedPitches(currentUser.getUserId());
 
         // greeting row
         JPanel texts = new JPanel(new GridLayout(2, 1, 0, 4));
@@ -394,7 +391,7 @@ public class DashboardFrame extends JFrame {
         chipWrap.setOpaque(false);
         chipWrap.add(roleChip);
 
-        int filled = Math.min(p.getMaxTeamSize(), 1 + db.countAcceptedMembers(p.getProjectId()));
+        int filled = Math.min(p.getMaxTeamSize(), 1 + DatabaseManager.countAcceptedMembers(p.getProjectId()));
         JPanel row = Theme.column();
         Theme.addRow(row, chipWrap, 6);
         Theme.addRow(row, Theme.label(p.getTitle(), Font.BOLD, 15, Theme.TEXT_PRIMARY), 10);
@@ -403,7 +400,7 @@ public class DashboardFrame extends JFrame {
     }
 
     private JComponent buildRecommendedCard() {
-        List<Match<ProjectPitch>> ranked = engine.rankProjectsForStudent(currentUser, otherStudentsPitches());
+        List<Match<ProjectPitch>> ranked = MatchEngine.rankProjectsForStudent(currentUser, otherStudentsPitches());
         JPanel list = Theme.column();
         if (ranked.isEmpty()) {
             Theme.addRow(list, Theme.label("No pitches from other students yet.", Font.PLAIN, 14, Theme.TEXT_MUTED), 0);
@@ -417,7 +414,7 @@ public class DashboardFrame extends JFrame {
 
     private JComponent recommendedItem(Match<ProjectPitch> match) {
         ProjectPitch p = match.getItem();
-        List<String> matched = engine.getMatchedSkills(p.getRequiredSkills(), currentUser.getSkillsList());
+        List<String> matched = MatchEngine.getMatchedSkills(p.getRequiredSkills(), currentUser.getSkillsList());
 
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -457,7 +454,7 @@ public class DashboardFrame extends JFrame {
                     Font.PLAIN, 14, Theme.TEXT_MUTED), BorderLayout.NORTH);
         } else {
             ProjectPitch focus = mine.get(0);            // newest pitch
-            List<Match<Student>> ranked = engine.rankStudentsForProject(focus, otherStudents());
+            List<Match<Student>> ranked = MatchEngine.rankStudentMatches(focus, otherStudents(true));
             body.add(Theme.label("Best fits for \"" + focus.getTitle() + "\"", Font.PLAIN, 14, Theme.TEXT_MUTED),
                     BorderLayout.NORTH);
             JPanel grid = new JPanel(new GridLayout(1, 4, 16, 0));
@@ -479,7 +476,7 @@ public class DashboardFrame extends JFrame {
 
     private JComponent teammateMiniCard(Match<Student> match, ProjectPitch pitch) {
         Student s = match.getItem();
-        List<String> matched = engine.getMatchedSkills(pitch.getRequiredSkills(), s.getSkillsList());
+        List<String> matched = MatchEngine.getMatchedSkills(pitch.getRequiredSkills(), s.getSkillsList());
 
         Theme.Avatar avatar = new Theme.Avatar(s.getName(), 48);
         JLabel name = Theme.label(s.getName(), Font.BOLD, 14, Theme.TEXT_PRIMARY);
@@ -537,7 +534,7 @@ public class DashboardFrame extends JFrame {
     private JComponent buildExploreView() {
         final Map<Integer, Student> students = studentsById();
         List<ProjectPitch> others = otherStudentsPitches();
-        final List<Match<ProjectPitch>> ranked = engine.rankProjectsForStudent(currentUser, others);
+        final List<Match<ProjectPitch>> ranked = MatchEngine.rankProjectsForStudent(currentUser, others);
         final List<Match<ProjectPitch>> shown = new ArrayList<>();
 
         // filter controls
@@ -572,7 +569,7 @@ public class DashboardFrame extends JFrame {
                         || p.getDescription().toLowerCase().contains(query);
                 if (skillOk && textOk) {
                     shown.add(m);
-                    int filled = Math.min(p.getMaxTeamSize(), 1 + db.countAcceptedMembers(p.getProjectId()));
+                    int filled = Math.min(p.getMaxTeamSize(), 1 + DatabaseManager.countAcceptedMembers(p.getProjectId()));
                     model.addRow(new Object[]{
                             p.getTitle(),
                             nameOf(students, p.getCreatorId()),
@@ -665,7 +662,7 @@ public class DashboardFrame extends JFrame {
     // =====================================================================
 
     private JComponent buildTeammatesView() {
-        List<ProjectPitch> mine = db.getPitchesByCreator(currentUser.getUserId());
+        List<ProjectPitch> mine = DatabaseManager.getPitchesByCreator(currentUser.getUserId());
         JPanel page = tablePage("Find Teammates", "Students ranked by how well they fit one of your projects.");
 
         if (mine.isEmpty()) {
@@ -685,7 +682,7 @@ public class DashboardFrame extends JFrame {
             return page;
         }
 
-        final List<Student> candidates = otherStudents();
+        final List<Student> candidates = otherStudents(false);
         final List<Match<Student>> shown = new ArrayList<>();
 
         final JComboBox<ProjectPitch> projectBox = new JComboBox<>(mine.toArray(new ProjectPitch[0]));
@@ -712,7 +709,7 @@ public class DashboardFrame extends JFrame {
             if (pitch == null) {
                 return;
             }
-            for (Match<Student> m : engine.rankStudentsForProject(pitch, candidates)) {
+            for (Match<Student> m : MatchEngine.rankStudentMatches(pitch, candidates)) {
                 Student s = m.getItem();
                 if (availableOnly.isSelected() && !s.isAvailabilityStatus()) {
                     continue;
@@ -786,11 +783,11 @@ public class DashboardFrame extends JFrame {
     private JComponent buildInvitationsView() {
         final Map<Integer, Student> students = studentsById();
         final Map<Integer, ProjectPitch> pitches = new HashMap<>();
-        for (ProjectPitch p : db.getAllPitches()) {
+        for (ProjectPitch p : DatabaseManager.getAllPitches()) {
             pitches.put(p.getProjectId(), p);
         }
-        final List<Invitation> received = db.getInvitationsReceivedBy(currentUser.getUserId());
-        List<Invitation> sent = db.getInvitationsSentBy(currentUser.getUserId());
+        final List<Invitation> received = DatabaseManager.getInvitationsReceivedBy(currentUser.getUserId());
+        List<Invitation> sent = DatabaseManager.getInvitationsSentBy(currentUser.getUserId());
 
         // received table
         DefaultTableModel receivedModel = readOnlyModel("From", "Project", "Type", "Status");
@@ -877,7 +874,7 @@ public class DashboardFrame extends JFrame {
             warn("This one was already " + inv.getStatus().toLowerCase() + ".", "Already answered");
             return;
         }
-        db.updateInvitationStatus(inv.getInvitationId(), newStatus);
+        DatabaseManager.updateInvitationStatus(inv.getInvitationId(), newStatus);
         showView(INVITATIONS);
     }
 
@@ -920,7 +917,7 @@ public class DashboardFrame extends JFrame {
             currentUser.setCgpa(cgpa);
             currentUser.setAreasOfInterest(interestsField.getText().trim());
             currentUser.setAvailabilityStatus(availableBox.isSelected());
-            db.updateStudentProfile(currentUser);
+            DatabaseManager.updateStudentProfile(currentUser);
             message.setForeground(Theme.MATCH_GREEN);
             message.setText("Profile saved.");
         });
@@ -978,4 +975,3 @@ public class DashboardFrame extends JFrame {
         return Theme.scroll(page);
     }
 }
-
