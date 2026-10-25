@@ -17,8 +17,6 @@ public class LoginFrame extends JFrame {
     private static final String SIGN_IN = "signin";
     private static final String REGISTER = "register";
 
-    private final DatabaseManager db;
-
     // card switching (CardLayout) - preferred size follows the visible form
     private final CardLayout formCards = new CardLayout() {
         @Override
@@ -58,9 +56,8 @@ public class LoginFrame extends JFrame {
     private final Theme.PillButton createButton =
             new Theme.PillButton("Create Account", Theme.PillButton.Kind.PRIMARY);
 
-    public LoginFrame(DatabaseManager db) {
+    public LoginFrame() {
         super("ProMatch - Sign in");
-        this.db = db;
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
         JPanel background = new JPanel(new GridBagLayout());
@@ -227,7 +224,7 @@ public class LoginFrame extends JFrame {
             loginMessage.setText("Please enter your email and password.");
             return;
         }
-        Student student = db.login(email, password);
+        Student student = DatabaseManager.login(email, password);
         if (student == null) {
             loginMessage.setText("Incorrect email or password.");
             return;
@@ -274,20 +271,19 @@ public class LoginFrame extends JFrame {
             registerMessage.setText("Password must be at least 8 characters.");
             return;
         }
-        if (db.emailExists(email)) {
+        if (DatabaseManager.emailExists(email)) {
             registerMessage.setText("An account with this email already exists.");
             return;
         }
 
-        Student student = db.registerStudent(name, email, password,
-                (String) departmentBox.getSelectedItem(), contact, skills, cgpa, interests,
-                availabilityBox.isSelected());
+        Student student = new Student(0, name, email, (String) departmentBox.getSelectedItem(),
+                contact, skills, cgpa, interests, availabilityBox.isSelected());
+        DatabaseManager.registerStudent(student, password);   // also sets the new user id
         openDashboard(student);
     }
 
     private void openDashboard(Student student) {
-        new DashboardFrame(db, student).setVisible(true);
+        new DashboardFrame(student).setVisible(true);
         dispose();
     }
 }
-
