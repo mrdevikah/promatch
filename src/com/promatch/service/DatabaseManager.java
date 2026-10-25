@@ -5,6 +5,10 @@ import com.promatch.model.Invitation;
 import com.promatch.model.ProjectPitch;
 import com.promatch.model.Student;
 
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -12,9 +16,19 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Properties;
 
 public class DatabaseManager {
-    private static final String URL = "jdbc:sqlite:promatch.db";
+    // Connection details come from db.properties (kept out of Git - see db.properties.example)
+    private static final String CONFIG_FILE = "db.properties";
+    private static String dbUrl;
+    private static String dbUser;
+    private static String dbPassword;
+
+    // One connection is opened and then reused, because opening a new connection to an
+    // online database for every query would make each screen slow.
+    private static Connection shared;
+    private static long lastUsed;
 
     private static final String STUDENT_SELECT =
             "SELECT u.user_id, u.name, u.email, u.department, u.contact_info, " +
@@ -27,21 +41,23 @@ public class DatabaseManager {
 
     // Initialize Database and Tables
     public static void initializeDatabase() {
-        try (Connection conn = DriverManager.getConnection(URL);
+        loadConfig();
+        try (Connection conn = connect();
              Statement stmt = conn.createStatement()) {
             
             // 1. Users Table (Base schema)
             String sqlUsers = "CREATE TABLE IF NOT EXISTS users (" +
-                    "user_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                    "name TEXT NOT NULL, " +
-                    "email TEXT UNIQUE NOT NULL, " +
-                    "department TEXT NOT NULL, " +
-                    "contact_info TEXT)";
+                    "user_id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "name VARCHAR(100) NOT NULL, " +
+                    "email VARCHAR(255) UNIQUE NOT NULL, " +
+                    "department VARCHAR(100) NOT NULL, " +
+                    "contact_info VARCHAR(255), " +
+                    "password_hash VARCHAR(64))";
             stmt.execute(sqlUsers);
 
             // 2. Students Table (Inheritance extension)
             String sqlStudents = "CREATE TABLE IF NOT EXISTS students (" +
-                    "user_id INTEGER PRIMARY KEY, " +
+                    "user_id INT PRIMARY KEY, " +
                     "skills_list TEXT, " + // Stored as comma-separated values (e.g., "Java,Python,SQL")
                     "cgpa REAL, " +
                     "areas_of_interest TEXT, " +
@@ -51,30 +67,26 @@ public class DatabaseManager {
 
             // 3. Project Pitches Table
             String sqlPitches = "CREATE TABLE IF NOT EXISTS project_pitches (" +
-                    "project_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                    "title TEXT NOT NULL, " +
+                    "project_id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "title VARCHAR(150) NOT NULL, " +
                     "description TEXT, " +
                     "required_skills TEXT, " +
-                    "max_team_size INTEGER, " +
-                    "creator_id INTEGER, " +
+                    "max_team_size INT, " +
+                    "creator_id INT, " +
                     "FOREIGN KEY(creator_id) REFERENCES users(user_id))";
             stmt.execute(sqlPitches);
 
             // 4. Invitations Table
             String sqlInvitations = "CREATE TABLE IF NOT EXISTS invitations (" +
-                    "invitation_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                    "sender_id INTEGER, " +
-                    "receiver_id INTEGER, " +
-                    "project_id INTEGER, " +
-                    "status TEXT, " +
+                    "invitation_id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "sender_id INT, " +
+                    "receiver_id INT, " +
+                    "project_id INT, " +
+                    "status VARCHAR(20), " +
                     "FOREIGN KEY(sender_id) REFERENCES users(user_id), " +
                     "FOREIGN KEY(receiver_id) REFERENCES users(user_id), " +
                     "FOREIGN KEY(project_id) REFERENCES project_pitches(project_id))";
             stmt.execute(sqlInvitations);
-
-            // Added for the GUI login: the users table also needs a password column.
-            // (Adds it to an existing promatch.db too, so old databases keep working.)
-            ensurePasswordColumn(conn);
 
             System.out.println("Database and tables initialized successfully.");
 
@@ -100,7 +112,7 @@ public class DatabaseManager {
     public static List<Student> getAllStudents() {
         List<Student> students = new ArrayList<>();
 
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(STUDENT_SELECT + " ORDER BY u.name")) {
 
@@ -124,21 +136,54 @@ public class DatabaseManager {
         return new IllegalStateException("Database error: " + e.getMessage(), e);
     }
 
-    private static void ensurePasswordColumn(Connection conn) throws SQLException {
-        boolean found = false;
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("PRAGMA table_info(users)")) {
-            while (rs.next()) {
-                if ("password_hash".equalsIgnoreCase(rs.getString("name"))) {
-                    found = true;
-                }
-            }
+    // ------------------------------------------------- connection to MySQL
+
+    /** Reads the database address and login from db.properties. */
+    private static void loadConfig() {
+        Properties props = new Properties();
+        try (FileInputStream in = new FileInputStream(CONFIG_FILE)) {
+            props.load(in);
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not read " + CONFIG_FILE + " in the project folder. "
+                    + "Copy db.properties.example to db.properties and fill in your database details.", e);
         }
-        if (!found) {
-            try (Statement st = conn.createStatement()) {
-                st.execute("ALTER TABLE users ADD COLUMN password_hash TEXT");
-            }
+        dbUrl = props.getProperty("db.url");
+        dbUser = props.getProperty("db.user");
+        dbPassword = props.getProperty("db.password");
+        if (dbUrl == null || dbUrl.trim().isEmpty() || dbUser == null || dbPassword == null) {
+            throw new IllegalStateException(CONFIG_FILE + " must contain db.url, db.user and db.password.");
         }
+    }
+
+    private static Connection open() throws SQLException {
+        DriverManager.setLoginTimeout(10);          // give up after 10 seconds instead of hanging
+        return DriverManager.getConnection(dbUrl.trim(), dbUser.trim(), dbPassword);
+    }
+
+    /**
+     * Returns the shared connection, reconnecting if it was closed or went stale.
+     * The returned connection ignores close(), so the try-with-resources blocks below
+     * can stay as they are without throwing the connection away after every query.
+     */
+    private static synchronized Connection connect() throws SQLException {
+        long now = System.currentTimeMillis();
+        if (shared == null || shared.isClosed() || (now - lastUsed > 30_000 && !shared.isValid(3))) {
+            shared = open();
+        }
+        lastUsed = now;
+        final Connection real = shared;
+        return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[]{Connection.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("close")) {
+                        return null;                 // keep it open for the next query
+                    }
+                    try {
+                        return method.invoke(real, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
     }
 
     private static String hash(String password) {
@@ -201,7 +246,7 @@ public class DatabaseManager {
 
     private static int lastInsertId(Connection conn) throws SQLException {
         try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT last_insert_rowid()")) {
+             ResultSet rs = st.executeQuery("SELECT LAST_INSERT_ID()")) {
             return rs.next() ? rs.getInt(1) : -1;
         }
     }
@@ -211,7 +256,7 @@ public class DatabaseManager {
     /** Returns the student for this email + password, or null if they don't match. */
     public static Student login(String email, String password) {
         String sql = STUDENT_SELECT + " WHERE LOWER(u.email) = LOWER(?) AND u.password_hash = ?";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, email.trim());
             ps.setString(2, hash(password));
@@ -228,7 +273,7 @@ public class DatabaseManager {
 
     public static boolean emailExists(String email) {
         String sql = "SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, email.trim());
             try (ResultSet rs = ps.executeQuery()) {
@@ -247,7 +292,7 @@ public class DatabaseManager {
         String insertUser = "INSERT INTO users(name, email, department, contact_info, password_hash) VALUES(?, ?, ?, ?, ?)";
         String insertStudent = "INSERT INTO students(user_id, skills_list, cgpa, areas_of_interest, availability_status) VALUES(?, ?, ?, ?, ?)";
 
-        try (Connection conn = DriverManager.getConnection(URL)) {
+        try (Connection conn = connect()) {
             conn.setAutoCommit(false);
             try {
                 try (PreparedStatement ps = conn.prepareStatement(insertUser)) {
@@ -286,7 +331,7 @@ public class DatabaseManager {
         String updateUser = "UPDATE users SET contact_info = ? WHERE user_id = ?";
         String updateStudent = "UPDATE students SET skills_list = ?, cgpa = ?, areas_of_interest = ?, "
                 + "availability_status = ? WHERE user_id = ?";
-        try (Connection conn = DriverManager.getConnection(URL)) {
+        try (Connection conn = connect()) {
             conn.setAutoCommit(false);
             try {
                 try (PreparedStatement ps = conn.prepareStatement(updateUser)) {
@@ -339,7 +384,7 @@ public class DatabaseManager {
 
         String sql = "INSERT INTO project_pitches(title, description, required_skills, max_team_size, creator_id) "
                 + "VALUES(?, ?, ?, ?, ?)";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, p.getTitle().trim());
             ps.setString(2, p.getDescription().trim());
@@ -356,7 +401,7 @@ public class DatabaseManager {
     /** All pitches, newest first. */
     public static List<ProjectPitch> getAllPitches() {
         List<ProjectPitch> list = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(PITCH_SELECT + " ORDER BY project_id DESC")) {
             while (rs.next()) {
@@ -372,7 +417,7 @@ public class DatabaseManager {
     public static List<ProjectPitch> getPitchesByCreator(int creatorId) {
         List<ProjectPitch> list = new ArrayList<>();
         String sql = PITCH_SELECT + " WHERE creator_id = ? ORDER BY project_id DESC";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, creatorId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -394,7 +439,7 @@ public class DatabaseManager {
                 + "FROM project_pitches p JOIN invitations i ON i.project_id = p.project_id "
                 + "WHERE i.status = 'Accepted' AND (i.sender_id = ? OR i.receiver_id = ?) "
                 + "AND p.creator_id <> ? ORDER BY p.project_id DESC";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, userId);
             ps.setInt(2, userId);
@@ -413,7 +458,7 @@ public class DatabaseManager {
     /** Number of people who joined a project through accepted invitations (the creator is not counted). */
     public static int countAcceptedMembers(int projectId) {
         String sql = "SELECT COUNT(*) FROM invitations WHERE project_id = ? AND status = 'Accepted'";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, projectId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -436,7 +481,7 @@ public class DatabaseManager {
         }
         String check = "SELECT 1 FROM invitations WHERE project_id = ? AND "
                 + "((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))";
-        try (Connection conn = DriverManager.getConnection(URL)) {
+        try (Connection conn = connect()) {
             try (PreparedStatement ps = conn.prepareStatement(check)) {
                 ps.setInt(1, projectId);
                 ps.setInt(2, senderId);
@@ -478,7 +523,7 @@ public class DatabaseManager {
 
     private static List<Invitation> queryInvitations(String sql, int userId) {
         List<Invitation> list = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, userId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -495,7 +540,7 @@ public class DatabaseManager {
     /** status must be "Pending", "Accepted" or "Declined". */
     public static void updateInvitationStatus(int invitationId, String status) {
         String sql = "UPDATE invitations SET status = ? WHERE invitation_id = ?";
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, status);
             ps.setInt(2, invitationId);
@@ -508,7 +553,7 @@ public class DatabaseManager {
     // ------------------------------------------------------------ sample data
 
     private static int countUsers() {
-        try (Connection conn = DriverManager.getConnection(URL);
+        try (Connection conn = connect();
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM users")) {
             return rs.next() ? rs.getInt(1) : 0;
@@ -566,7 +611,7 @@ public class DatabaseManager {
                 "One place to publish, discover and register for events on campus.",
                 Arrays.asList("Java", "SQL", "Git", "Docker"), 4, meera.getUserId()));
 
-        try (Connection conn = DriverManager.getConnection(URL)) {
+        try (Connection conn = connect()) {
             // Meera invites the demo student to her project (pending)
             insertInvitation(conn, meera.getUserId(), demo.getUserId(), events, "Pending");
             // Anjali already joined the demo student's portal project
