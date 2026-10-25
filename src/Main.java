@@ -26,14 +26,15 @@ public class Main {
 
         SwingUtilities.invokeLater(() -> {
             try {
-                // 1. Initialize Database & Tables (also adds sample data the very first time)
+                // 1. Connect to the shared MySQL database, create the tables, add sample data if it is empty
                 DatabaseManager.initializeDatabase();
                 // 2. Open the app
                 new LoginFrame().setVisible(true);
             } catch (RuntimeException e) {
                 JOptionPane.showMessageDialog(null,
-                        "Could not open the database.\n" + e.getMessage()
-                                + "\n\nIs the sqlite-jdbc library on the classpath?",
+                        "Could not connect to the database.\n" + e.getMessage()
+                                + "\n\nCheck: db.properties exists and is correct, you are online,"
+                                + "\nand the MySQL driver jar is in the lib folder.",
                         "ProMatch", JOptionPane.ERROR_MESSAGE);
                 System.exit(1);
             }
