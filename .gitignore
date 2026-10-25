@@ -1,0 +1,11 @@
+# compiled code and downloaded libraries (rebuilt / re-downloaded on each machine)
+out/
+lib/
+target/
+sources.txt
+
+# database login details - NEVER commit these
+db.properties
+
+# old local SQLite database files
+*.db
