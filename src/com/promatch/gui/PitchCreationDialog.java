@@ -4,6 +4,7 @@ import com.promatch.exception.InvalidPitchException;
 import com.promatch.model.ProjectPitch;
 import com.promatch.model.Student;
 import com.promatch.service.DatabaseManager;
+import com.promatch.service.MatchEngine;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -26,8 +27,10 @@ public class PitchCreationDialog extends JDialog {
     private final JTextField titleField = new JTextField();
     private final JTextArea descriptionArea = new JTextArea(4, 20);
     private final JLabel counterLabel = Theme.label("0/" + MAX_SUMMARY, Font.PLAIN, 12, Theme.TEXT_MUTED);
-    private final JTextField skillsField = new JTextField();
+    private final JTextField skillsField = new SkillAutoCompleteField();
     private final JSpinner teamSizeSpinner = new JSpinner(new SpinnerNumberModel(4, 2, 10, 1));
+    private final JComboBox<String> workModeBox = new JComboBox<>();
+    private final JSpinner hoursSpinner = new JSpinner(new SpinnerNumberModel(5, 1, 40, 1));
     private final JLabel messageLabel = Theme.label(" ", Font.PLAIN, 13, Theme.ERROR);
     private final Theme.PillButton publishButton =
             new Theme.PillButton("Publish Pitch", Theme.PillButton.Kind.PRIMARY);
@@ -62,7 +65,7 @@ public class PitchCreationDialog extends JDialog {
         Theme.styleField(titleField);
         Theme.styleField(skillsField);
         titleField.setToolTipText("e.g. Smart Campus IoT Monitoring System");
-        skillsField.setToolTipText("Separate with commas, e.g. Java, SQL, Git");
+        skillsField.setToolTipText("Start typing a skill. Separate with commas, e.g. Java, SQL, Figma");
 
         // description: text area inside a rounded scroll pane
         descriptionArea.setFont(Theme.font(Font.PLAIN, 14));
@@ -111,11 +114,25 @@ public class PitchCreationDialog extends JDialog {
         teamRow.setOpaque(false);
         teamRow.add(teamSizeSpinner);
 
+        // work mode + weekly hours expected from each member
+        Theme.styleCombo(workModeBox);
+        workModeBox.addItem("Select...");
+        for (String mode : MatchEngine.WORK_MODES) {
+            workModeBox.addItem(mode);
+        }
+        hoursSpinner.setFont(Theme.font(Font.PLAIN, 14));
+        hoursSpinner.setPreferredSize(new Dimension(90, 38));
+        JPanel workRow = new JPanel(new GridLayout(1, 2, 12, 0));
+        workRow.setOpaque(false);
+        workRow.add(Theme.labeled("Work Mode", workModeBox));
+        workRow.add(Theme.labeled("Hours per week (each member)", hoursSpinner));
+
         JPanel form = Theme.column();
         Theme.addRow(form, Theme.labeled("Project Title", titleField), 14);
         Theme.addRow(form, Theme.labeled("Short Public Summary", descBox), 14);
         Theme.addRow(form, Theme.labeled("Required Skills (comma separated)", skillsBox), 14);
-        Theme.addRow(form, Theme.labeled("Team Size (including you)", teamRow), 8);
+        Theme.addRow(form, Theme.labeled("Team Size (including you)", teamRow), 14);
+        Theme.addRow(form, workRow, 8);
         Theme.addRow(form, messageLabel, 0);
         return Theme.top(form);
     }
@@ -160,7 +177,9 @@ public class PitchCreationDialog extends JDialog {
                     descriptionArea.getText(),
                     Theme.parseSkills(skillsField.getText()),
                     (Integer) teamSizeSpinner.getValue(),
-                    creator.getUserId());
+                    creator.getUserId(),
+                    workModeBox.getSelectedIndex() <= 0 ? "" : (String) workModeBox.getSelectedItem(),
+                    (Integer) hoursSpinner.getValue());
             DatabaseManager.addPitch(pitch);          // throws InvalidPitchException if a rule is broken
             published = true;
             dispose();

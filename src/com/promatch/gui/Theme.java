@@ -52,7 +52,10 @@ final class Theme {
             "Electronics & Communication Engineering",
             "Electrical & Electronics Engineering",
             "Mechanical Engineering",
-            "Civil Engineering"
+            "Civil Engineering",
+            "Architecture",
+            "Chemical Engineering",
+            "Production Engineering"
     };
 
     // ---- fonts ----

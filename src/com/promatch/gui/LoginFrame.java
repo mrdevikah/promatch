@@ -2,6 +2,7 @@ package com.promatch.gui;
 
 import com.promatch.model.Student;
 import com.promatch.service.DatabaseManager;
+import com.promatch.service.MatchEngine;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -47,10 +48,12 @@ public class LoginFrame extends JFrame {
     private final JTextField regEmailField = new JTextField();
     private final JComboBox<String> departmentBox = new JComboBox<>();
     private final JTextField contactField = new JTextField();
-    private final JTextField skillsField = new JTextField();
+    private final JTextField skillsField = new SkillAutoCompleteField();
     private final JTextField cgpaField = new JTextField();
     private final JTextField interestsField = new JTextField();
     private final JPasswordField regPasswordField = new JPasswordField();
+    private final JComboBox<String> workModeBox = new JComboBox<>();
+    private final JSpinner hoursSpinner = new JSpinner(new SpinnerNumberModel(6, 1, 40, 1));
     private final JCheckBox availabilityBox = new JCheckBox("I'm available for new projects", true);
     private final JLabel registerMessage = Theme.label(" ", Font.PLAIN, 13, Theme.ERROR);
     private final Theme.PillButton createButton =
@@ -163,6 +166,14 @@ public class LoginFrame extends JFrame {
         Theme.styleCombo(departmentBox);
         Theme.styleCheck(availabilityBox);
 
+        Theme.styleCombo(workModeBox);
+        workModeBox.addItem("Select...");
+        for (String mode : MatchEngine.WORK_MODES) {
+            workModeBox.addItem(mode);
+        }
+        hoursSpinner.setFont(Theme.font(Font.PLAIN, 14));
+        hoursSpinner.setPreferredSize(new Dimension(90, 38));
+
         departmentBox.addItem("Select department...");
         for (String d : Theme.DEPARTMENTS) {
             departmentBox.addItem(d);
@@ -176,6 +187,11 @@ public class LoginFrame extends JFrame {
         cgpaAndInterest.add(Theme.labeled("CGPA (0-10)", cgpaField));
         cgpaAndInterest.add(Theme.labeled("Areas of Interest", interestsField));
 
+        JPanel workModeAndHours = new JPanel(new GridLayout(1, 2, 12, 0));
+        workModeAndHours.setOpaque(false);
+        workModeAndHours.add(Theme.labeled("Preferred Work Mode", workModeBox));
+        workModeAndHours.add(Theme.labeled("Hours per week you can give", hoursSpinner));
+
         createButton.addActionListener(e -> handleRegister());
 
         JPanel form = Theme.column();
@@ -185,6 +201,7 @@ public class LoginFrame extends JFrame {
         Theme.addRow(form, Theme.labeled("Contact Info (phone / GitHub)", contactField), 14);
         Theme.addRow(form, Theme.labeled("Skills (comma separated)", skillsField), 14);
         Theme.addRow(form, cgpaAndInterest, 14);
+        Theme.addRow(form, workModeAndHours, 14);
         Theme.addRow(form, Theme.labeled("Password (min. 8 characters)", regPasswordField), 8);
         Theme.addRow(form, availabilityBox, 6);
         Theme.addRow(form, registerMessage, 6);
@@ -256,6 +273,10 @@ public class LoginFrame extends JFrame {
             registerMessage.setText("Add at least one skill.");
             return;
         }
+        if (workModeBox.getSelectedIndex() <= 0) {
+            registerMessage.setText("Please choose your preferred work mode.");
+            return;
+        }
         double cgpa;
         try {
             cgpa = Double.parseDouble(cgpaField.getText().trim());
@@ -277,7 +298,8 @@ public class LoginFrame extends JFrame {
         }
 
         Student student = new Student(0, name, email, (String) departmentBox.getSelectedItem(),
-                contact, skills, cgpa, interests, availabilityBox.isSelected());
+                contact, skills, cgpa, interests, availabilityBox.isSelected(),
+                (String) workModeBox.getSelectedItem(), (Integer) hoursSpinner.getValue());
         DatabaseManager.registerStudent(student, password);   // also sets the new user id
         openDashboard(student);
     }

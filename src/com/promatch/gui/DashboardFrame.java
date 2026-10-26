@@ -33,8 +33,9 @@ public class DashboardFrame extends JFrame {
     private static final String EXPLORE = "Explore Projects";
     private static final String TEAMMATES = "Find Teammates";
     private static final String INVITATIONS = "Invitations";
+    private static final String TEAMS = "My Teams";
     private static final String PROFILE = "Profile";
-    private static final String[] VIEW_NAMES = {DASHBOARD, EXPLORE, TEAMMATES, INVITATIONS, PROFILE};
+    private static final String[] VIEW_NAMES = {DASHBOARD, EXPLORE, TEAMMATES, INVITATIONS, TEAMS, PROFILE};
 
     private final Student currentUser;
 
@@ -134,6 +135,7 @@ public class DashboardFrame extends JFrame {
             case EXPLORE: fresh = buildExploreView(); break;
             case TEAMMATES: fresh = buildTeammatesView(); break;
             case INVITATIONS: fresh = buildInvitationsView(); break;
+            case TEAMS: fresh = buildTeamsView(); break;
             default: fresh = buildProfileView(); break;
         }
         views.put(name, fresh);
@@ -293,7 +295,13 @@ public class DashboardFrame extends JFrame {
 
     /** Send an invitation to a student for one of my projects. */
     private void inviteStudent(Student target, ProjectPitch pitch) {
-        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), target.getUserId(), pitch.getProjectId());
+        String note = askForMessage("Invite " + target.getName(),
+                "Add a short note to " + firstNameOf(target.getName()) + " (optional):", false);
+        if (note == null) {
+            return;                                   // cancelled
+        }
+        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), target.getUserId(),
+                pitch.getProjectId(), note);
         if (sent) {
             info("Invitation sent to " + target.getName() + " for \"" + pitch.getTitle() + "\".", "Invitation sent");
         } else {
@@ -304,13 +312,73 @@ public class DashboardFrame extends JFrame {
 
     /** Ask to join somebody else's project. */
     private void requestToJoin(ProjectPitch pitch, Map<Integer, Student> students) {
-        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), pitch.getCreatorId(), pitch.getProjectId());
         String creator = nameOf(students, pitch.getCreatorId());
+        String note = askForMessage("Request to join",
+                "Introduce yourself to " + creator + " - why do you want to join \"" + pitch.getTitle() + "\"?", true);
+        if (note == null) {
+            return;                                   // cancelled
+        }
+        boolean sent = DatabaseManager.sendInvitation(currentUser.getUserId(), pitch.getCreatorId(),
+                pitch.getProjectId(), note);
         if (sent) {
             info("Your request was sent to " + creator + ".", "Request sent");
         } else {
             warn("You already have a request or invitation with " + creator + " for this project.",
                     "Already requested");
+        }
+    }
+
+    private static String firstNameOf(String name) {
+        return name == null || name.trim().isEmpty() ? "them" : name.trim().split("\\s+")[0];
+    }
+
+    /**
+     * Shows a box to type a short message. Returns the text, or null if the person cancelled.
+     * If required is true, an empty message is not accepted. Max DatabaseManager.MAX_MESSAGE characters.
+     */
+    private String askForMessage(String title, String prompt, boolean required) {
+        final int max = DatabaseManager.MAX_MESSAGE;
+        JTextArea area = new JTextArea(5, 34);
+        area.setFont(Theme.font(Font.PLAIN, 14));
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setBorder(new EmptyBorder(8, 10, 8, 10));
+        JLabel counter = Theme.label("0/" + max, Font.PLAIN, 12, Theme.TEXT_MUTED);
+        JLabel error = Theme.label(" ", Font.PLAIN, 12, Theme.ERROR);
+        area.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            private void update() {
+                int n = area.getText().length();
+                counter.setText(n + "/" + max);
+                counter.setForeground(n > max ? Theme.ERROR : Theme.TEXT_MUTED);
+            }
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+        });
+
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(error, BorderLayout.WEST);
+        south.add(counter, BorderLayout.EAST);
+        JPanel box = new JPanel(new BorderLayout(0, 8));
+        box.add(Theme.wrapLabel(prompt, 380, Font.PLAIN, 14, Theme.TEXT_PRIMARY), BorderLayout.NORTH);
+        box.add(new JScrollPane(area), BorderLayout.CENTER);
+        box.add(south, BorderLayout.SOUTH);
+
+        while (true) {
+            int choice = JOptionPane.showConfirmDialog(this, box, title,
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) {
+                return null;
+            }
+            String text = area.getText().trim();
+            if (required && text.isEmpty()) {
+                error.setText("Please write a short message.");
+            } else if (text.length() > max) {
+                error.setText("Please keep it to " + max + " characters.");
+            } else {
+                return text;
+            }
         }
     }
 
@@ -515,6 +583,22 @@ public class DashboardFrame extends JFrame {
         return card;
     }
 
+    /** Table text for a work mode that may not be set. */
+    private static String modeText(String mode) {
+        return mode == null || mode.isEmpty() ? "-" : mode;
+    }
+
+    /** Table text for weekly hours that may not be set (0). */
+    private static String hoursText(int hours) {
+        return hours <= 0 ? "-" : String.valueOf(hours);
+    }
+
+    private static String workInfo(String mode, int hours) {
+        String m = mode == null || mode.isEmpty() ? "work mode not set" : mode;
+        String h = hours <= 0 ? "hours not set" : hours + " h/week";
+        return m + "   \u00B7   " + h;
+    }
+
     private static String shortDept(String department) {
         if (department == null) {
             return "";
@@ -524,6 +608,9 @@ public class DashboardFrame extends JFrame {
         if (department.startsWith("Electrical")) return "EEE";
         if (department.startsWith("Mechanical")) return "ME";
         if (department.startsWith("Civil")) return "CE";
+        if (department.startsWith("Architecture")) return "ARCH";
+        if (department.startsWith("Chemical")) return "CHE";
+        if (department.startsWith("Production")) return "PE";
         return department;
     }
 
@@ -552,8 +639,9 @@ public class DashboardFrame extends JFrame {
         skillBox.setPreferredSize(new Dimension(190, 38));
         final JTextField searchField = new JTextField(16);
         Theme.styleField(searchField);
+        searchField.setToolTipText("Searches the title, the summary and the required skills");
 
-        final DefaultTableModel model = readOnlyModel("Project", "Created by", "Required skills", "Team", "Match");
+        final DefaultTableModel model = readOnlyModel("Project", "Created by", "Required skills", "Team", "Mode", "Hrs/wk", "Match");
         final JTable table = new JTable(model);
 
         final Runnable applyFilter = () -> {
@@ -566,7 +654,8 @@ public class DashboardFrame extends JFrame {
                 boolean skillOk = skill == null || allSkills.equals(skill) || containsIgnoreCase(p.getRequiredSkills(), skill);
                 boolean textOk = query.isEmpty()
                         || p.getTitle().toLowerCase().contains(query)
-                        || p.getDescription().toLowerCase().contains(query);
+                        || p.getDescription().toLowerCase().contains(query)
+                        || String.join(" ", p.getRequiredSkills()).toLowerCase().contains(query);
                 if (skillOk && textOk) {
                     shown.add(m);
                     int filled = Math.min(p.getMaxTeamSize(), 1 + DatabaseManager.countAcceptedMembers(p.getProjectId()));
@@ -575,6 +664,8 @@ public class DashboardFrame extends JFrame {
                             nameOf(students, p.getCreatorId()),
                             String.join(", ", p.getRequiredSkills()),
                             filled + "/" + p.getMaxTeamSize(),
+                            modeText(p.getWorkMode()),
+                            hoursText(p.getHoursPerWeek()),
                             m.getScore() + "%"});
                 }
             }
@@ -610,16 +701,46 @@ public class DashboardFrame extends JFrame {
 
         // table
         applyFilter.run();
-        table.getColumnModel().getColumn(0).setPreferredWidth(280);
-        table.getColumnModel().getColumn(1).setPreferredWidth(140);
-        table.getColumnModel().getColumn(2).setPreferredWidth(300);
-        table.getColumnModel().getColumn(3).setPreferredWidth(70);
+        table.getColumnModel().getColumn(0).setPreferredWidth(240);
+        table.getColumnModel().getColumn(1).setPreferredWidth(120);
+        table.getColumnModel().getColumn(2).setPreferredWidth(250);
+        table.getColumnModel().getColumn(3).setPreferredWidth(60);
         table.getColumnModel().getColumn(4).setPreferredWidth(80);
+        table.getColumnModel().getColumn(5).setPreferredWidth(70);
+        table.getColumnModel().getColumn(6).setPreferredWidth(70);
         JComponent tableCard = tableCard(table);
-        table.getColumnModel().getColumn(3)
-                .setCellRenderer(new Theme.CellRenderer(null, false, SwingConstants.CENTER));
-        table.getColumnModel().getColumn(4)
+        for (int col : new int[]{3, 4, 5}) {
+            table.getColumnModel().getColumn(col)
+                    .setCellRenderer(new Theme.CellRenderer(null, false, SwingConstants.CENTER));
+        }
+        table.getColumnModel().getColumn(6)
                 .setCellRenderer(new Theme.CellRenderer(Theme::matchColor, true, SwingConstants.CENTER));
+
+        // details panel: shows the full summary of the project selected in the table
+        final JPanel detailsBody = new JPanel(new BorderLayout());
+        detailsBody.setOpaque(false);
+        Theme.RoundedPanel detailsCard = new Theme.RoundedPanel(new BorderLayout(), 16, Color.WHITE, Theme.BORDER);
+        detailsCard.setBorder(new EmptyBorder(16, 20, 16, 20));
+        detailsCard.setPreferredSize(new Dimension(100, 205));
+        detailsCard.add(detailsBody, BorderLayout.CENTER);
+        final Runnable showDetails = () -> {
+            detailsBody.removeAll();
+            int row = table.getSelectedRow();
+            if (row < 0 || row >= shown.size()) {
+                detailsBody.add(Theme.label("Select a project above to read its summary and see which skills you already have.",
+                        Font.PLAIN, 14, Theme.TEXT_MUTED), BorderLayout.NORTH);
+            } else {
+                detailsBody.add(buildProjectDetails(shown.get(row), students), BorderLayout.CENTER);
+            }
+            detailsBody.revalidate();
+            detailsBody.repaint();
+        };
+        table.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                showDetails.run();
+            }
+        });
+        showDetails.run();
 
         // send request
         Theme.PillButton sendButton = new Theme.PillButton("Send Request", Theme.PillButton.Kind.PRIMARY);
@@ -641,11 +762,62 @@ public class DashboardFrame extends JFrame {
         middle.setOpaque(false);
         middle.add(filterBar, BorderLayout.NORTH);
         middle.add(tableCard, BorderLayout.CENTER);
+        middle.add(detailsCard, BorderLayout.SOUTH);
 
         JPanel page = tablePage("Explore Projects", "Ranked by how well your skills and CGPA match what each project needs.");
         page.add(middle, BorderLayout.CENTER);
         page.add(bottom, BorderLayout.SOUTH);
         return page;
+    }
+
+    /** The content of the details panel: title, match %, creator, full summary, skills, team size. */
+    private JComponent buildProjectDetails(Match<ProjectPitch> match, Map<Integer, Student> students) {
+        ProjectPitch p = match.getItem();
+        List<String> matched = MatchEngine.getMatchedSkills(p.getRequiredSkills(), currentUser.getSkillsList());
+        Student creator = students.get(p.getCreatorId());
+        String by = "by " + nameOf(students, p.getCreatorId())
+                + (creator == null ? "" : "   \u00B7   " + shortDept(creator.getDepartment()))
+                + "   \u00B7   " + workInfo(p.getWorkMode(), p.getHoursPerWeek());
+        int filled = Math.min(p.getMaxTeamSize(), 1 + DatabaseManager.countAcceptedMembers(p.getProjectId()));
+
+        JPanel head = new JPanel(new BorderLayout());
+        head.setOpaque(false);
+        head.add(Theme.label(p.getTitle(), Font.BOLD, 17, Theme.TEXT_PRIMARY), BorderLayout.WEST);
+        head.add(Theme.label(match.getScore() + "% match", Font.BOLD, 14, Theme.MAROON), BorderLayout.EAST);
+        JPanel titles = new JPanel(new GridLayout(2, 1, 0, 2));
+        titles.setOpaque(false);
+        titles.add(head);
+        titles.add(Theme.label(by, Font.PLAIN, 13, Theme.TEXT_MUTED));
+
+        // JTextArea (not a label) so a long summary wraps to whatever width the window has
+        JTextArea summary = new JTextArea(p.getDescription());
+        summary.setEditable(false);
+        summary.setOpaque(false);
+        summary.setLineWrap(true);
+        summary.setWrapStyleWord(true);
+        summary.setFont(Theme.font(Font.PLAIN, 14));
+        summary.setForeground(Theme.TEXT_SECONDARY);
+        summary.setBorder(new EmptyBorder(8, 0, 8, 0));
+
+        JPanel skills = new JPanel(new BorderLayout());
+        skills.setOpaque(false);
+        skills.add(Theme.chipRow(p.getRequiredSkills(), matched, 12, FlowLayout.LEFT), BorderLayout.CENTER);
+        skills.add(Theme.label("Team " + filled + "/" + p.getMaxTeamSize(), Font.PLAIN, 13, Theme.TEXT_MUTED),
+                BorderLayout.EAST);
+
+        // how the match % adds up (skills / interests / work mode / hours / CGPA)
+        MatchEngine.Breakdown why = MatchEngine.breakdown(currentUser, p);
+        JPanel bottom = new JPanel(new GridLayout(2, 1, 0, 6));
+        bottom.setOpaque(false);
+        bottom.add(skills);
+        bottom.add(Theme.label("How it adds up:   " + why.describe(), Font.PLAIN, 12, Theme.TEXT_MUTED));
+
+        JPanel box = new JPanel(new BorderLayout());
+        box.setOpaque(false);
+        box.add(titles, BorderLayout.NORTH);
+        box.add(summary, BorderLayout.CENTER);
+        box.add(bottom, BorderLayout.SOUTH);
+        return box;
     }
 
     private static boolean containsIgnoreCase(List<String> list, String value) {
@@ -699,7 +871,7 @@ public class DashboardFrame extends JFrame {
         final JCheckBox availableOnly = new JCheckBox("Only show available students", true);
         Theme.styleCheck(availableOnly);
 
-        final DefaultTableModel model = readOnlyModel("Name", "Dept", "Skills", "CGPA", "Available", "Match");
+        final DefaultTableModel model = readOnlyModel("Name", "Dept", "Skills", "CGPA", "Available", "Mode", "Hrs/wk", "Match");
         final JTable table = new JTable(model);
 
         final Runnable refresh = () -> {
@@ -721,6 +893,8 @@ public class DashboardFrame extends JFrame {
                         String.join(", ", s.getSkillsList()),
                         String.valueOf(s.getCgpa()),
                         s.isAvailabilityStatus() ? "Yes" : "No",
+                        modeText(s.getWorkMode()),
+                        hoursText(s.getWeeklyHours()),
                         m.getScore() + "%"});
             }
         };
@@ -739,17 +913,19 @@ public class DashboardFrame extends JFrame {
         filterBar.add(availableOnly);
 
         JComponent tableCard = tableCard(table);
-        table.getColumnModel().getColumn(0).setPreferredWidth(160);
-        table.getColumnModel().getColumn(1).setPreferredWidth(80);
-        table.getColumnModel().getColumn(2).setPreferredWidth(320);
-        table.getColumnModel().getColumn(3).setPreferredWidth(70);
-        table.getColumnModel().getColumn(4).setPreferredWidth(90);
+        table.getColumnModel().getColumn(0).setPreferredWidth(150);
+        table.getColumnModel().getColumn(1).setPreferredWidth(70);
+        table.getColumnModel().getColumn(2).setPreferredWidth(260);
+        table.getColumnModel().getColumn(3).setPreferredWidth(60);
+        table.getColumnModel().getColumn(4).setPreferredWidth(80);
         table.getColumnModel().getColumn(5).setPreferredWidth(80);
-        for (int col : new int[]{1, 3, 4}) {
+        table.getColumnModel().getColumn(6).setPreferredWidth(70);
+        table.getColumnModel().getColumn(7).setPreferredWidth(70);
+        for (int col : new int[]{1, 3, 4, 5, 6}) {
             table.getColumnModel().getColumn(col)
                     .setCellRenderer(new Theme.CellRenderer(null, false, SwingConstants.CENTER));
         }
-        table.getColumnModel().getColumn(5)
+        table.getColumnModel().getColumn(7)
                 .setCellRenderer(new Theme.CellRenderer(Theme::matchColor, true, SwingConstants.CENTER));
 
         Theme.PillButton sendButton = new Theme.PillButton("Send Invitation", Theme.PillButton.Kind.PRIMARY);
@@ -790,10 +966,11 @@ public class DashboardFrame extends JFrame {
         List<Invitation> sent = DatabaseManager.getInvitationsSentBy(currentUser.getUserId());
 
         // received table
-        DefaultTableModel receivedModel = readOnlyModel("From", "Project", "Type", "Status");
+        DefaultTableModel receivedModel = readOnlyModel("From", "Project", "Type", "Status", "Message");
         for (Invitation inv : received) {
             receivedModel.addRow(new Object[]{
-                    nameOf(students, inv.getSenderId()), projectTitle(pitches, inv), typeOf(pitches, inv), inv.getStatus()});
+                    nameOf(students, inv.getSenderId()), projectTitle(pitches, inv), typeOf(pitches, inv),
+                    inv.getStatus(), preview(inv.getMessage())});
         }
         final JTable receivedTable = new JTable(receivedModel);
         JComponent receivedTableCard = tableCard(receivedTable);
@@ -805,8 +982,20 @@ public class DashboardFrame extends JFrame {
         decline.setBorder(new EmptyBorder(8, 20, 8, 20));
         accept.addActionListener(e -> decide(receivedTable, received, "Accepted"));
         decline.addActionListener(e -> decide(receivedTable, received, "Declined"));
+        Theme.PillButton readMessage = new Theme.PillButton("Read Message", Theme.PillButton.Kind.SECONDARY);
+        readMessage.setBorder(new EmptyBorder(8, 20, 8, 20));
+        readMessage.addActionListener(e -> {
+            int row = receivedTable.getSelectedRow();
+            if (row < 0) {
+                info("Select an invitation in the Received table first.", "Nothing selected");
+                return;
+            }
+            Invitation inv = received.get(row);
+            showMessage(nameOf(students, inv.getSenderId()), inv.getMessage());
+        });
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttons.setOpaque(false);
+        buttons.add(readMessage);
         buttons.add(decline);
         buttons.add(accept);
 
@@ -816,10 +1005,11 @@ public class DashboardFrame extends JFrame {
         receivedBody.add(buttons, BorderLayout.SOUTH);
 
         // sent table
-        DefaultTableModel sentModel = readOnlyModel("To", "Project", "Type", "Status");
+        DefaultTableModel sentModel = readOnlyModel("To", "Project", "Type", "Status", "Message");
         for (Invitation inv : sent) {
             sentModel.addRow(new Object[]{
-                    nameOf(students, inv.getReceiverId()), projectTitle(pitches, inv), typeOf(pitches, inv), inv.getStatus()});
+                    nameOf(students, inv.getReceiverId()), projectTitle(pitches, inv), typeOf(pitches, inv),
+                    inv.getStatus(), preview(inv.getMessage())});
         }
         JTable sentTable = new JTable(sentModel);
         JComponent sentTableCard = tableCard(sentTable);
@@ -847,9 +1037,31 @@ public class DashboardFrame extends JFrame {
         table.getColumnModel().getColumn(3)
                 .setCellRenderer(new Theme.CellRenderer(Theme::statusColor, true, SwingConstants.LEFT));
         table.getColumnModel().getColumn(0).setPreferredWidth(170);
-        table.getColumnModel().getColumn(1).setPreferredWidth(340);
-        table.getColumnModel().getColumn(2).setPreferredWidth(130);
-        table.getColumnModel().getColumn(3).setPreferredWidth(100);
+        table.getColumnModel().getColumn(1).setPreferredWidth(260);
+        table.getColumnModel().getColumn(2).setPreferredWidth(110);
+        table.getColumnModel().getColumn(3).setPreferredWidth(90);
+        table.getColumnModel().getColumn(4).setPreferredWidth(300);
+    }
+
+    /** One-line shortened version of a message for table cells. */
+    private static String preview(String message) {
+        if (message == null || message.trim().isEmpty()) {
+            return "-";
+        }
+        String oneLine = message.trim().replaceAll("\\s+", " ");
+        return oneLine.length() > 60 ? oneLine.substring(0, 57) + "..." : oneLine;
+    }
+
+    private void showMessage(String from, String message) {
+        String text = message == null || message.trim().isEmpty() ? "(no message)" : message.trim();
+        JTextArea area = new JTextArea(text, 5, 34);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(Theme.font(Font.PLAIN, 14));
+        area.setBorder(new EmptyBorder(8, 10, 8, 10));
+        JOptionPane.showMessageDialog(this, new JScrollPane(area), "Message from " + from,
+                JOptionPane.PLAIN_MESSAGE);
     }
 
     private String projectTitle(Map<Integer, ProjectPitch> pitches, Invitation inv) {
@@ -876,6 +1088,67 @@ public class DashboardFrame extends JFrame {
         }
         DatabaseManager.updateInvitationStatus(inv.getInvitationId(), newStatus);
         showView(INVITATIONS);
+        if ("Accepted".equals(newStatus)) {
+            info("Done! You can now see each other's contact details under \"My Teams\".", "Accepted");
+        }
+    }
+
+    // =====================================================================
+    //  4b. My Teams  (members of every project I own or joined, with contact details)
+    // =====================================================================
+
+    private JComponent buildTeamsView() {
+        List<ProjectPitch> projects = new ArrayList<>(DatabaseManager.getPitchesByCreator(currentUser.getUserId()));
+        projects.addAll(DatabaseManager.getJoinedPitches(currentUser.getUserId()));
+
+        JPanel stack = Theme.column();
+        Theme.addRow(stack, Theme.pageHeader("My Teams",
+                "Everyone on your projects, with the contact details they gave when signing up."), 24);
+
+        if (projects.isEmpty()) {
+            Theme.addRow(stack, Theme.label("You haven't pitched or joined a project yet.",
+                    Font.PLAIN, 14, Theme.TEXT_MUTED), 0);
+        }
+        for (ProjectPitch p : projects) {
+            List<Student> members = DatabaseManager.getTeamMembers(p.getProjectId());
+            JPanel list = Theme.column();
+            for (Student m : members) {
+                Theme.addRow(list, memberRow(m, m.getUserId() == p.getCreatorId()), 14);
+            }
+            String subtitle = members.size() + "/" + p.getMaxTeamSize() + " members";
+            Theme.addRow(stack, Theme.card(p.getTitle(), Theme.label(subtitle, Font.PLAIN, 13, Theme.TEXT_MUTED),
+                    Theme.top(list)), 20);
+        }
+
+        Theme.ScrollPage page = new Theme.ScrollPage(new BorderLayout());
+        page.setBackground(Theme.BG_PAGE);
+        page.setBorder(new EmptyBorder(32, 32, 32, 32));
+        page.add(stack, BorderLayout.NORTH);
+        return Theme.scroll(page);
+    }
+
+    private JComponent memberRow(Student m, boolean lead) {
+        boolean me = m.getUserId() == currentUser.getUserId();
+        Theme.Chip role = lead
+                ? new Theme.Chip("Lead", Theme.MAROON, Theme.BRAND_50, Theme.BRAND_100)
+                : new Theme.Chip("Member", Theme.TEXT_SECONDARY, Theme.NEUTRAL_BG, Theme.BORDER);
+        JPanel nameLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        nameLine.setOpaque(false);
+        nameLine.add(Theme.label(m.getName() + (me ? " (you)" : ""), Font.BOLD, 15, Theme.TEXT_PRIMARY));
+        nameLine.add(role);
+
+        JPanel info = new JPanel(new GridLayout(3, 1, 0, 2));
+        info.setOpaque(false);
+        info.add(nameLine);
+        info.add(Theme.label(m.getDepartment(), Font.PLAIN, 13, Theme.TEXT_MUTED));
+        info.add(Theme.label("Email: " + m.getEmail() + "      Contact: " + m.getContactInfo(),
+                Font.PLAIN, 13, Theme.TEXT_SECONDARY));
+
+        JPanel row = new JPanel(new BorderLayout(14, 0));
+        row.setOpaque(false);
+        row.add(new Theme.Avatar(m.getName(), 44), BorderLayout.WEST);
+        row.add(info, BorderLayout.CENTER);
+        return row;
     }
 
     // =====================================================================
@@ -884,12 +1157,26 @@ public class DashboardFrame extends JFrame {
 
     private JComponent buildProfileView() {
         final JTextField contactField = new JTextField(currentUser.getContactInfo());
-        final JTextField skillsField = new JTextField(String.join(", ", currentUser.getSkillsList()));
+        final JTextField skillsField = new SkillAutoCompleteField();
+        skillsField.setText(String.join(", ", currentUser.getSkillsList()));
         final JTextField cgpaField = new JTextField(String.valueOf(currentUser.getCgpa()));
         final JTextField interestsField = new JTextField(currentUser.getAreasOfInterest());
         final JCheckBox availableBox = new JCheckBox("I'm available for new projects",
                 currentUser.isAvailabilityStatus());
         final JLabel message = Theme.label(" ", Font.PLAIN, 13, Theme.ERROR);
+        final JComboBox<String> workModeBox = new JComboBox<>();
+        workModeBox.addItem("Not set");
+        for (String mode : MatchEngine.WORK_MODES) {
+            workModeBox.addItem(mode);
+        }
+        if (!currentUser.getWorkMode().isEmpty()) {
+            workModeBox.setSelectedItem(currentUser.getWorkMode());
+        }
+        Theme.styleCombo(workModeBox);
+        final JSpinner hoursSpinner = new JSpinner(new SpinnerNumberModel(
+                Math.max(0, Math.min(40, currentUser.getWeeklyHours())), 0, 40, 1));
+        hoursSpinner.setFont(Theme.font(Font.PLAIN, 14));
+        hoursSpinner.setPreferredSize(new Dimension(90, 38));
         Theme.styleField(contactField);
         Theme.styleField(skillsField);
         Theme.styleField(cgpaField);
@@ -917,7 +1204,10 @@ public class DashboardFrame extends JFrame {
             currentUser.setCgpa(cgpa);
             currentUser.setAreasOfInterest(interestsField.getText().trim());
             currentUser.setAvailabilityStatus(availableBox.isSelected());
+            currentUser.setWorkMode(workModeBox.getSelectedIndex() <= 0 ? "" : (String) workModeBox.getSelectedItem());
+            currentUser.setWeeklyHours((Integer) hoursSpinner.getValue());
             DatabaseManager.updateStudentProfile(currentUser);
+            skillsField.setText(String.join(", ", currentUser.getSkillsList()));   // shows the saved spelling
             message.setForeground(Theme.MATCH_GREEN);
             message.setText("Profile saved.");
         });
@@ -943,6 +1233,11 @@ public class DashboardFrame extends JFrame {
         Theme.addRow(form, Theme.labeled("Contact Info", contactField), 14);
         Theme.addRow(form, Theme.labeled("Skills (comma separated)", skillsField), 14);
         Theme.addRow(form, twoCols, 12);
+        JPanel workCols = new JPanel(new GridLayout(1, 2, 12, 0));
+        workCols.setOpaque(false);
+        workCols.add(Theme.labeled("Preferred Work Mode", workModeBox));
+        workCols.add(Theme.labeled("Hours per week you can give (0 = not set)", hoursSpinner));
+        Theme.addRow(form, workCols, 12);
         Theme.addRow(form, availableBox, 6);
         Theme.addRow(form, message, 6);
         JPanel saveWrap = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
